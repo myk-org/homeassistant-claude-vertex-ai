@@ -1,34 +1,53 @@
-"""Constants for Vertex AI Conversation integration."""
-from typing import Final
+"""Constants for the Anthropic integration."""
 
-DOMAIN: Final = "claude_vertex_ai_conversation"
+import logging
 
-# Configuration keys
-CONF_PROJECT_ID: Final = "project_id"
-CONF_LOCATION: Final = "location"
-CONF_SERVICE_ACCOUNT_JSON: Final = "service_account_json"
+DOMAIN = "claude_vertex_ai_conversation"
+LOGGER = logging.getLogger(__package__)
 
-# Default values
-DEFAULT_LOCATION: Final = "us-east5"
-DEFAULT_TIMEOUT: Final = 10000  # milliseconds
+CONF_PROJECT_ID = "project_id"
+CONF_LOCATION = "location"
+CONF_SERVICE_ACCOUNT_JSON = "service_account_json"
+DEFAULT_LOCATION = "us-east5"
 
-# Recommended models for Claude via Vertex AI
-RECOMMENDED_CHAT_MODEL: Final = "claude-sonnet-4-5@20250929"
+DEFAULT_CONVERSATION_NAME = "Claude conversation"
+DEFAULT_AI_TASK_NAME = "Claude AI Task"
 
-# Model parameter defaults for Claude
-RECOMMENDED_TEMPERATURE: Final = 1.0
-RECOMMENDED_TOP_P: Final = 0.95
-RECOMMENDED_TOP_K: Final = 64
-RECOMMENDED_MAX_TOKENS: Final = 3000
+CONF_RECOMMENDED = "recommended"
+CONF_PROMPT = "prompt"
+CONF_CHAT_MODEL = "chat_model"
+CONF_MAX_TOKENS = "max_tokens"
+CONF_TEMPERATURE = "temperature"
+CONF_THINKING_BUDGET = "thinking_budget"
+CONF_WEB_SEARCH = "web_search"
+CONF_WEB_SEARCH_USER_LOCATION = "user_location"
+CONF_WEB_SEARCH_MAX_USES = "web_search_max_uses"
+CONF_WEB_SEARCH_CITY = "city"
+CONF_WEB_SEARCH_REGION = "region"
+CONF_WEB_SEARCH_COUNTRY = "country"
+CONF_WEB_SEARCH_TIMEZONE = "timezone"
 
-# Subentry types
-SUBENTRY_CONVERSATION: Final = "conversation"
+DEFAULT = {
+    CONF_CHAT_MODEL: "claude-haiku-4-5",
+    CONF_MAX_TOKENS: 3000,
+    CONF_TEMPERATURE: 1.0,
+    CONF_THINKING_BUDGET: 0,
+    CONF_WEB_SEARCH: False,
+    CONF_WEB_SEARCH_USER_LOCATION: False,
+    CONF_WEB_SEARCH_MAX_USES: 5,
+}
 
-# Platform types (Claude only supports conversation for now)
-PLATFORMS: Final = ["conversation"]
+MIN_THINKING_BUDGET = 1024
 
-# Default titles
-DEFAULT_CONVERSATION_TITLE: Final = "Claude Conversation"
+NON_THINKING_MODELS = [
+    "claude-3-5",  # Both sonnet and haiku
+    "claude-3-opus",
+    "claude-3-haiku",
+]
 
-# OAuth scopes
-VERTEX_AI_SCOPES: Final = ["https://www.googleapis.com/auth/cloud-platform"]
+WEB_SEARCH_UNSUPPORTED_MODELS = [
+    "claude-3-haiku",
+    "claude-3-opus",
+    "claude-3-5-sonnet-20240620",
+    "claude-3-5-sonnet-20241022",
+]
