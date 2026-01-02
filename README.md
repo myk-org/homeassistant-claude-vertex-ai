@@ -261,6 +261,8 @@ automation:
 
 The Custom Tools feature allows you to define custom tools in YAML that Claude can call to execute arbitrary Home Assistant services. This enables you to create specialized commands tailored to your smart home setup without writing custom code.
 
+See [custom_tools_example.yaml](examples/custom_tools/custom_tools_example.yaml) for a complete working example.
+
 ### Overview
 
 Custom tools extend Claude's capabilities beyond the built-in Home Assistant controls. You can:
@@ -278,7 +280,7 @@ To add custom tools to your Claude integration:
 3. Click **Configure**
 4. Select your conversation agent
 5. Scroll to the **Custom Tools (YAML)** field
-6. Add your custom tool definitions in YAML format
+6. Add your custom tool definitions in YAML format (see [custom_tools_example.yaml](examples/custom_tools/custom_tools_example.yaml))
 7. Click **Submit** to save
 
 ### YAML Schema

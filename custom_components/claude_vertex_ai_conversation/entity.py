@@ -101,11 +101,13 @@ def _format_tool(
     tool: llm.Tool, custom_serializer: Callable[[Any], Any] | None
 ) -> ToolParam:
     """Format tool specification."""
-    return ToolParam(
+    tool_param = ToolParam(
         name=tool.name,
         description=tool.description or "",
         input_schema=convert(tool.parameters, custom_serializer=custom_serializer),
     )
+    LOGGER.debug("Formatted tool '%s' with description: %s", tool.name, tool.description)
+    return tool_param
 
 
 @dataclass(slots=True)
@@ -176,9 +178,21 @@ def _convert_content(
 ) -> list[MessageParam]:
     """Transform HA chat_log content into Anthropic API format."""
     messages: list[MessageParam] = []
+    # Track tool_use IDs that have already been responded to, to prevent duplicates
+    responded_tool_ids: set[str] = set()
 
     for content in chat_content:
         if isinstance(content, conversation.ToolResultContent):
+            # Skip duplicate tool results (same tool_call_id)
+            if content.tool_call_id in responded_tool_ids:
+                LOGGER.debug(
+                    "Skipping duplicate tool result for tool_call_id=%s (tool_name=%s)",
+                    content.tool_call_id,
+                    content.tool_name,
+                )
+                continue
+            responded_tool_ids.add(content.tool_call_id)
+
             if content.tool_name == "web_search":
                 tool_result_block: ContentBlockParam = WebSearchToolResultBlockParam(
                     type="web_search_tool_result",
@@ -192,10 +206,26 @@ def _convert_content(
                 )
                 external_tool = True
             else:
+                # Ensure tool result is a single JSON string
+                # If tool_result is already a string, use it directly
+                # Otherwise, serialize it to JSON
+                if isinstance(content.tool_result, str):
+                    result_content = content.tool_result
+                else:
+                    result_content = json.dumps(content.tool_result)
+
+                LOGGER.debug(
+                    "Converting tool result for %s (id=%s): type=%s, content_len=%d",
+                    content.tool_name,
+                    content.tool_call_id,
+                    type(content.tool_result).__name__,
+                    len(result_content),
+                )
+
                 tool_result_block = ToolResultBlockParam(
                     type="tool_result",
                     tool_use_id=content.tool_call_id,
-                    content=json.dumps(content.tool_result),
+                    content=result_content,
                 )
                 external_tool = False
             if not messages or messages[-1]["role"] != (
@@ -334,6 +364,8 @@ async def _transform_stream(  # noqa: C901 - This is complex, but better to have
     chat_log: conversation.ChatLog,
     stream: AsyncStream[MessageStreamEvent],
     output_tool: str | None = None,
+    custom_tools: dict[str, CustomTool] | None = None,
+    hass: HomeAssistant | None = None,
 ) -> AsyncGenerator[
     conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
 ]:
@@ -527,16 +559,53 @@ async def _transform_stream(  # noqa: C901 - This is complex, but better to have
                     continue
                 tool_args = json.loads(current_tool_args) if current_tool_args else {}
                 current_tool_block["input"] = tool_args
-                yield {
-                    "tool_calls": [
-                        llm.ToolInput(
-                            id=current_tool_block["id"],
-                            tool_name=current_tool_block["name"],
-                            tool_args=tool_args,
-                            external=current_tool_block["type"] == "server_tool_use",
+
+                tool_input = llm.ToolInput(
+                    id=current_tool_block["id"],
+                    tool_name=current_tool_block["name"],
+                    tool_args=tool_args,
+                    external=current_tool_block["type"] == "server_tool_use",
+                )
+
+                # Yield the tool call first
+                yield {"tool_calls": [tool_input]}
+
+                # Check if this is a custom tool and execute it immediately
+                if (
+                    custom_tools
+                    and hass
+                    and current_tool_block["name"] in custom_tools
+                    and current_tool_block["type"] != "server_tool_use"  # Only execute non-external tools
+                ):
+                    LOGGER.debug(
+                        "Executing custom tool %s during stream processing",
+                        current_tool_block["name"]
+                    )
+                    custom_tool = custom_tools[current_tool_block["name"]]
+                    try:
+                        result = await custom_tool.async_call(
+                            hass,
+                            tool_input,
+                            chat_log.llm_context if hasattr(chat_log, 'llm_context') else None,
                         )
-                    ]
-                }
+                        LOGGER.debug("Custom tool %s returned: %s", current_tool_block["name"], result)
+                    except Exception as err:
+                        LOGGER.error(
+                            "Error executing custom tool %s: %s",
+                            current_tool_block["name"],
+                            err,
+                            exc_info=True,
+                        )
+                        result = {"error": str(err)}
+
+                    # Yield the tool result immediately
+                    yield {
+                        "role": "tool_result",
+                        "tool_call_id": current_tool_block["id"],
+                        "tool_name": current_tool_block["name"],
+                        "tool_result": result,
+                    }
+
                 current_tool_block = None
         elif isinstance(response, RawMessageDeltaEvent):
             if (usage := response.usage) is not None:
@@ -740,7 +809,12 @@ class AnthropicBaseLLMEntity(Entity):
             )
 
         if tools:
+            LOGGER.debug("Sending %d tools to Claude API:", len(tools))
+            for tool in tools:
+                LOGGER.debug("  - Tool name: %s", tool.get("name", "unknown"))
             model_args["tools"] = tools
+        else:
+            LOGGER.debug("No tools to send to Claude API")
 
         client = self.entry.runtime_data
 
@@ -759,6 +833,8 @@ class AnthropicBaseLLMEntity(Entity):
                                     chat_log,
                                     stream,
                                     output_tool=structure_name if structure else None,
+                                    custom_tools=self._custom_tools,
+                                    hass=self.hass,
                                 ),
                             )
                         ]
@@ -769,58 +845,78 @@ class AnthropicBaseLLMEntity(Entity):
                     f"Sorry, I had a problem talking to Anthropic: {err}"
                 ) from err
 
-            # Execute custom tools
+            # Custom tools are now executed during stream processing in _transform_stream.
+            # This fallback execution is kept for any edge cases, but should rarely be needed.
+            LOGGER.debug("Checking for any remaining unresponded custom tools")
             await self._execute_custom_tools(chat_log)
 
             if not chat_log.unresponded_tool_results:
+                LOGGER.debug("No unresponded tool results, breaking loop")
                 break
+            LOGGER.debug("Has unresponded tool results, continuing loop")
 
     async def _execute_custom_tools(self, chat_log: conversation.ChatLog) -> None:
         """Execute any pending custom tool calls."""
+        LOGGER.debug("=== _execute_custom_tools called ===")
+        LOGGER.debug("Custom tools available: %s", list(self._custom_tools.keys()))
+        LOGGER.debug("Chat log has %d content items", len(chat_log.content))
+
         if not self._custom_tools:
+            LOGGER.debug("No custom tools registered, skipping")
             return
 
         # Find pending tool calls that are custom tools
-        for content in chat_log.content:
-            if isinstance(content, conversation.AssistantContent) and content.tool_calls:
-                for tool_call in content.tool_calls:
-                    if tool_call.tool_name in self._custom_tools:
-                        # Check if this tool call has already been responded to
-                        tool_responded = False
-                        for response_content in chat_log.content:
-                            if (
-                                isinstance(response_content, conversation.ToolResultContent)
-                                and response_content.tool_call_id == tool_call.id
-                            ):
-                                tool_responded = True
-                                break
+        for idx, content in enumerate(chat_log.content):
+            LOGGER.debug("Content[%d]: type=%s", idx, type(content).__name__)
+            if isinstance(content, conversation.AssistantContent):
+                LOGGER.debug("  AssistantContent found, tool_calls=%s", content.tool_calls)
+                if content.tool_calls:
+                    for tool_call in content.tool_calls:
+                        LOGGER.debug("    Tool call: id=%s, name=%s, args=%s",
+                                   tool_call.id, tool_call.tool_name, tool_call.tool_args)
+                        if tool_call.tool_name in self._custom_tools:
+                            LOGGER.debug("    -> This is a CUSTOM TOOL!")
+                            # Check if this tool call has already been responded to
+                            tool_responded = False
+                            for response_content in chat_log.content:
+                                if (
+                                    isinstance(response_content, conversation.ToolResultContent)
+                                    and response_content.tool_call_id == tool_call.id
+                                ):
+                                    tool_responded = True
+                                    LOGGER.debug("    -> Tool already responded to, skipping")
+                                    break
 
-                        if not tool_responded:
-                            custom_tool = self._custom_tools[tool_call.tool_name]
-                            tool_input = llm.ToolInput(
-                                tool_name=tool_call.tool_name,
-                                tool_args=tool_call.tool_args,
-                            )
-                            try:
-                                result = await custom_tool.async_call(
-                                    self.hass,
-                                    tool_input,
-                                    chat_log.llm_context if hasattr(chat_log, 'llm_context') else None,
+                            if not tool_responded:
+                                LOGGER.debug("    -> Executing custom tool %s", tool_call.tool_name)
+                                custom_tool = self._custom_tools[tool_call.tool_name]
+                                tool_input = llm.ToolInput(
+                                    tool_name=tool_call.tool_name,
+                                    tool_args=tool_call.tool_args,
                                 )
-                            except Exception as err:
-                                LOGGER.error(
-                                    "Error executing custom tool %s with args %s: %s",
-                                    tool_call.tool_name,
-                                    tool_call.tool_args,
-                                    err,
-                                    exc_info=True,
-                                )
-                                result = {"error": str(err)}
+                                try:
+                                    LOGGER.debug("    -> Calling async_call with args: %s", tool_call.tool_args)
+                                    result = await custom_tool.async_call(
+                                        self.hass,
+                                        tool_input,
+                                        chat_log.llm_context if hasattr(chat_log, 'llm_context') else None,
+                                    )
+                                    LOGGER.debug("    -> Tool returned result: %s", result)
+                                except Exception as err:
+                                    LOGGER.error(
+                                        "Error executing custom tool %s with args %s: %s",
+                                        tool_call.tool_name,
+                                        tool_call.tool_args,
+                                        err,
+                                        exc_info=True,
+                                    )
+                                    result = {"error": str(err)}
 
-                            chat_log.async_add_tool_result(
-                                tool_call,
-                                result,
-                            )
+                                LOGGER.debug("    -> Adding tool result to chat_log")
+                                chat_log.async_add_tool_result(
+                                    tool_call,
+                                    result,
+                                )
 
 
 async def async_prepare_files_for_prompt(

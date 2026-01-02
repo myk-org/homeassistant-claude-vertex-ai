@@ -148,11 +148,13 @@ class CustomTool(llm.Tool):
                 # Use HA's sandboxed template
                 template = HATemplate(data, self._hass)
                 rendered = template.async_render(args, limited=True)
+                # Convert to string if it's a wrapper object
+                rendered_str = str(rendered)
                 # Try to parse as YAML for complex types
                 try:
-                    return yaml.safe_load(rendered)
+                    return yaml.safe_load(rendered_str)
                 except yaml.YAMLError:
-                    return rendered
+                    return rendered_str
             return data
         elif isinstance(data, dict):
             return {k: self._process_templates(v, args) for k, v in data.items()}
