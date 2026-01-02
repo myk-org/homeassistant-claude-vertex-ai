@@ -638,11 +638,14 @@ class AnthropicBaseLLMEntity(Entity):
             ]
 
         # Parse and add custom tools
-        custom_tools_yaml = self.subentry.data.get(CONF_CUSTOM_TOOLS, "")
+        custom_tools_yaml = options.get(CONF_CUSTOM_TOOLS, "")
         custom_tools_list: list[CustomTool] = []
         if custom_tools_yaml:
+            LOGGER.debug("Parsing custom tools from YAML config")
             custom_tools_list = parse_custom_tools(self.hass, custom_tools_yaml)
+            LOGGER.debug("Parsed %d custom tool(s)", len(custom_tools_list))
             for custom_tool in custom_tools_list:
+                LOGGER.debug("Adding custom tool '%s' to tools list", custom_tool.name)
                 tools.append(_format_tool(
                     custom_tool,
                     chat_log.llm_api.custom_serializer if chat_log.llm_api else None
@@ -650,6 +653,7 @@ class AnthropicBaseLLMEntity(Entity):
 
         # Store custom tools for execution lookup
         self._custom_tools = {tool.name: tool for tool in custom_tools_list}
+        LOGGER.debug("Total tools available: %d (including %d custom tools)", len(tools), len(custom_tools_list))
 
         if options.get(CONF_WEB_SEARCH):
             web_search = WebSearchTool20250305Param(
