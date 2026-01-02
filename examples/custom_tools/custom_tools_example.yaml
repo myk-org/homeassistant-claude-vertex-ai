@@ -1,0 +1,44 @@
+# Example custom tools configuration for Claude Vertex AI Conversation
+# Copy and paste this into the "Custom Tools (YAML)" field in the integration config
+
+- spec:
+    name: schedule_boiler
+    description: "Schedule the water heater/boiler by setting time slots. Call this when user asks to schedule the boiler/dud."
+    parameters:
+      type: object
+      properties:
+        slots:
+          type: array
+          description: "Array of time slots. Each slot must have hour (0-23), minute (0 or 30), and isActive (true/false)"
+      required:
+        - slots
+  function:
+    type: script
+    sequence:
+      - service: timer_24h.set_slots
+        data:
+          entity_id: sensor.boiler_boiler
+          slots: "{{ slots }}"
+
+# Another example: control a scene
+- spec:
+    name: activate_movie_mode
+    description: "Activate movie mode - dims lights and turns on TV"
+    parameters:
+      type: object
+      properties:
+        brightness:
+          type: integer
+          description: "Brightness level for lights (0-100)"
+      required: []
+  function:
+    type: script
+    sequence:
+      - service: light.turn_on
+        target:
+          area_id: living_room
+        data:
+          brightness_pct: "{{ brightness | default(20) }}"
+      - service: media_player.turn_on
+        target:
+          entity_id: media_player.tv

@@ -13,6 +13,7 @@ from typing import Any, cast
 from anthropic import AnthropicVertex
 import voluptuous as vol
 from voluptuous_openapi import convert
+import yaml
 
 from homeassistant.components.zone import ENTITY_ID_HOME
 from homeassistant.config_entries import (
@@ -38,11 +39,15 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     TemplateSelector,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
 )
 from homeassistant.helpers.typing import VolDictType
 
 from .const import (
     CONF_CHAT_MODEL,
+    CONF_CUSTOM_TOOLS,
     CONF_LOCATION,
     CONF_MAX_TOKENS,
     CONF_PROJECT_ID,
@@ -66,6 +71,7 @@ from .const import (
     NON_THINKING_MODELS,
     WEB_SEARCH_UNSUPPORTED_MODELS,
 )
+from .custom_tools import TOOLS_SCHEMA
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -240,6 +246,9 @@ class ConversationSubentryFlowHandler(ConfigSubentryFlow):
                     ): SelectSelector(
                         SelectSelectorConfig(options=hass_apis, multiple=True)
                     ),
+                    vol.Optional(CONF_CUSTOM_TOOLS, default=""): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.TEXT, multiline=True)
+                    ),
                 }
             )
 
@@ -252,6 +261,23 @@ class ConversationSubentryFlowHandler(ConfigSubentryFlow):
         if user_input is not None:
             if not user_input.get(CONF_LLM_HASS_API):
                 user_input.pop(CONF_LLM_HASS_API, None)
+
+            # Validate custom tools YAML if present
+            if self._subentry_type == "conversation" and CONF_CUSTOM_TOOLS in user_input:
+                custom_tools_yaml = user_input.get(CONF_CUSTOM_TOOLS, "").strip()
+                if custom_tools_yaml:
+                    try:
+                        # Parse YAML
+                        tools_config = yaml.safe_load(custom_tools_yaml)
+                        if tools_config:  # Only validate if not empty
+                            # Validate against schema
+                            TOOLS_SCHEMA(tools_config)
+                    except yaml.YAMLError as err:
+                        _LOGGER.warning("Invalid YAML in custom tools: %s", err)
+                        errors[CONF_CUSTOM_TOOLS] = "invalid_custom_tools_yaml"
+                    except vol.Invalid as err:
+                        _LOGGER.warning("Invalid custom tools schema: %s", err)
+                        errors[CONF_CUSTOM_TOOLS] = "invalid_custom_tools_schema"
 
             if user_input[CONF_RECOMMENDED]:
                 if not errors:

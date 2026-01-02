@@ -68,6 +68,10 @@
         "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
       },
       "entry_type": "Conversation agent",
+      "error": {
+        "invalid_custom_tools_yaml": "Invalid YAML syntax in custom tools configuration",
+        "invalid_custom_tools_schema": "Custom tools configuration does not match the required schema"
+      },
       "initiate_flow": {
         "reconfigure": "Reconfigure conversation agent",
         "user": "Add conversation agent"
@@ -86,10 +90,12 @@
             "llm_hass_api": "[%key:common::config_flow::data::llm_hass_api%]",
             "name": "[%key:common::config_flow::data::name%]",
             "prompt": "[%key:common::config_flow::data::prompt%]",
-            "recommended": "Recommended model settings"
+            "recommended": "Recommended model settings",
+            "custom_tools": "Custom Tools (YAML)"
           },
           "data_description": {
-            "prompt": "Instruct how the LLM should respond. This can be a template."
+            "prompt": "Instruct how the LLM should respond. This can be a template.",
+            "custom_tools": "Define custom tools in YAML format. Each tool maps a Claude function call to Home Assistant service calls."
           },
           "title": "Basic settings"
         },
